@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from exominer.src.utils import get_output_dim
+
 
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -31,14 +33,28 @@ class ConvBlock(nn.Module):
 
 
 class TimeSeriesCNN(nn.Module):
-    def __init__(self):
+    def __init__(
+        self,
+        in_channels=1,
+        channels=[16, 32, 64]
+    ):
         super().__init__()
 
-        self.features = nn.Sequential(
-            ConvBlock(1, 16),
-            ConvBlock(16, 32),
-            ConvBlock(32, 64),
-        )
+        layers = []
+
+        current_channels = in_channels
+
+        for out_channels in channels:
+            layers.append(
+                ConvBlock(
+                    current_channels,
+                    out_channels
+                )
+            )
+
+            current_channels = out_channels
+
+        self.features = nn.Sequential(*layers)
 
         self.flatten = nn.Flatten()
 
@@ -46,6 +62,8 @@ class TimeSeriesCNN(nn.Module):
         x = self.features(x)
         x = self.flatten(x)
         return x
+    
+    
 
 class DualFluxNetwork(nn.Module):
     def __init__(self):
@@ -101,19 +119,32 @@ class MultiBranchExoMiner(nn.Module):
         super().__init__()
 
 
-        self.full_flux_branch = TimeSeriesCNN()
-        self.transit_flux_branch = TimeSeriesCNN()
+        self.full_flux_branch = TimeSeriesCNN(
+             channels=[16,32,64]
+        )
+        self.transit_flux_branch = TimeSeriesCNN(
+            channels=[16,32,64]
+        )
 
-        self.full_centroid_branch = TimeSeriesCNN()
-        self.transit_centroid_branch = TimeSeriesCNN()
+        self.full_centroid_branch = TimeSeriesCNN(
+            channels=[16,32,64]
+        )
+        self.transit_centroid_branch = TimeSeriesCNN(
+            channels=[16,32,64]
+        )
 
         self.scalar_encoder = ScalarFeatureEncoder(
             scalar_dim
         )
-
+        feature_dim = get_output_dim(
+            self.full_flux_branch
+        )
+        fusion_dim = (
+            feature_dim * 4 + 128
+        )
         self.classifier = nn.Sequential(
             nn.Linear(
-                1600 * 4 + 128,
+                fusion_dim,
                 1024
             ),
             nn.PReLU(),
