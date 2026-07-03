@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from exominer.src.utils import get_output_dim
+from src.utils import get_output_dim
 
 
 class ConvBlock(nn.Module):
