@@ -32,6 +32,6 @@ def generate_global_view(
 
         else:
 
-            binned_flux[i] = np.nan
+            binned_flux[i] = 1.0
 
     return binned_flux
