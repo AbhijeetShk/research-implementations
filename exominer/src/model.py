@@ -115,50 +115,37 @@ class ScalarFeatureEncoder(nn.Module):
         return self.encoder(x)
 
 class MultiBranchExoMiner(nn.Module):
-    def __init__(self, scalar_dim):
+    def __init__(self, scalar_dim, full_flux_len=200, transit_flux_len=50, full_centroid_len=50, transit_centroid_len=50):
         super().__init__()
 
+        self.full_flux_branch = TimeSeriesCNN(channels=[16, 32, 64])
+        self.transit_flux_branch = TimeSeriesCNN(channels=[16, 32, 64])
+        self.full_centroid_branch = TimeSeriesCNN(channels=[16, 32, 64])
+        self.transit_centroid_branch = TimeSeriesCNN(channels=[16, 32, 64])
 
-        self.full_flux_branch = TimeSeriesCNN(
-             channels=[16,32,64]
-        )
-        self.transit_flux_branch = TimeSeriesCNN(
-            channels=[16,32,64]
-        )
+        self.scalar_encoder = ScalarFeatureEncoder(scalar_dim)
 
-        self.full_centroid_branch = TimeSeriesCNN(
-            channels=[16,32,64]
-        )
-        self.transit_centroid_branch = TimeSeriesCNN(
-            channels=[16,32,64]
-        )
+        flux_feat_dim = get_output_dim(self.full_flux_branch, input_length=full_flux_len)
+        transit_flux_feat_dim = get_output_dim(self.transit_flux_branch, input_length=transit_flux_len)
+        full_centroid_feat_dim = get_output_dim(self.full_centroid_branch, input_length=full_centroid_len)
+        transit_centroid_feat_dim = get_output_dim(self.transit_centroid_branch, input_length=transit_centroid_len)
+        
+        scalar_out_dim = 128 
 
-        self.scalar_encoder = ScalarFeatureEncoder(
-            scalar_dim
-        )
-        feature_dim = get_output_dim(
-            self.full_flux_branch
-        )
         fusion_dim = (
-            feature_dim * 4 + 128
+            flux_feat_dim + 
+            transit_flux_feat_dim + 
+            full_centroid_feat_dim + 
+            transit_centroid_feat_dim + 
+            scalar_out_dim
         )
+
         self.classifier = nn.Sequential(
-            nn.Linear(
-                fusion_dim,
-                1024
-            ),
+            nn.Linear(fusion_dim, 1024),
             nn.PReLU(),
-
-            nn.Linear(
-                1024,
-                256
-            ),
+            nn.Linear(1024, 256),
             nn.PReLU(),
-
-            nn.Linear(
-                256,
-                1
-            )
+            nn.Linear(256, 1)
         )
 
     def forward(
