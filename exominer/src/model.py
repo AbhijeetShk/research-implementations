@@ -120,25 +120,24 @@ class ScalarFeatureEncoder(nn.Module):
 
 class CrossModalAttentionFusion(nn.Module):
 
-    def __init__(self, feature_dim):
+    def __init__(self, flux_dim, centroid_dim):
         super().__init__()
-        self.query_proj = nn.Linear(feature_dim, feature_dim)
-        self.key_proj = nn.Linear(feature_dim, feature_dim)
-        self.value_proj = nn.Linear(feature_dim, feature_dim)
-        self.scale = feature_dim ** -0.5
+        self.query_proj = nn.Linear(flux_dim, flux_dim)
+        self.key_proj = nn.Linear(centroid_dim, flux_dim)     #centroid dim -> flux dim
+        self.value_proj = nn.Linear(centroid_dim, flux_dim)
+        self.scale = flux_dim ** -0.5
 
     def forward(self, flux_feat, centroid_feat):
-        # flux_feat: [B, D], centroid_feat: [B, D]
-        Q = self.query_proj(flux_feat).unsqueeze(1)    # [B, 1, D]
-        K = self.key_proj(centroid_feat).unsqueeze(1)  # [B, 1, D]
-        V = self.value_proj(centroid_feat).unsqueeze(1)# [B, 1, D]
+        Q = self.query_proj(flux_feat).unsqueeze(1)    # [B, 1, D] for Q,K,V
+        K = self.key_proj(centroid_feat).unsqueeze(1)
+        V = self.value_proj(centroid_feat).unsqueeze(1)
 
         scores = torch.matmul(Q, K.transpose(-1, -2)) * self.scale # [B, 1, 1]
         attn_weights = F.softmax(scores, dim=-1)
         
-        attended_centroid = torch.matmul(attn_weights, V).squeeze(1) # [B, D]
+        attended_centroid = torch.matmul(attn_weights, V).squeeze(1) # [B, D_flux]
         
-        # Residual fusion with original flux features
+        # residual fusion with original flux features
         return flux_feat + attended_centroid
     
 class MultiBranchExoMiner(nn.Module):
@@ -157,8 +156,8 @@ class MultiBranchExoMiner(nn.Module):
         full_centroid_feat_dim = get_output_dim(self.full_centroid_branch, input_length=full_centroid_len)
         transit_centroid_feat_dim = get_output_dim(self.transit_centroid_branch, input_length=transit_centroid_len)
         #Cross-modal attention modules for flux and centroid features(global and local streams)
-        self.global_attention = CrossModalAttentionFusion(flux_feat_dim)
-        self.local_attention = CrossModalAttentionFusion(transit_flux_feat_dim)
+        self.global_attention = CrossModalAttentionFusion(flux_feat_dim, full_centroid_feat_dim)
+        self.local_attention = CrossModalAttentionFusion(transit_flux_feat_dim, transit_centroid_feat_dim)
         
         scalar_out_dim = 128 
 
