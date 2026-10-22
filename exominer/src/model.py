@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-
+import torch.nn.functional as F
 from src.utils import get_output_dim
 
 
@@ -114,6 +114,33 @@ class ScalarFeatureEncoder(nn.Module):
     def forward(self, x):
         return self.encoder(x)
 
+ 
+    # Allows the primary flux representation to dynamically attend 
+    # to spatial centroid evidence, filtering out noisy photocenter shifts.
+
+class CrossModalAttentionFusion(nn.Module):
+
+    def __init__(self, feature_dim):
+        super().__init__()
+        self.query_proj = nn.Linear(feature_dim, feature_dim)
+        self.key_proj = nn.Linear(feature_dim, feature_dim)
+        self.value_proj = nn.Linear(feature_dim, feature_dim)
+        self.scale = feature_dim ** -0.5
+
+    def forward(self, flux_feat, centroid_feat):
+        # flux_feat: [B, D], centroid_feat: [B, D]
+        Q = self.query_proj(flux_feat).unsqueeze(1)    # [B, 1, D]
+        K = self.key_proj(centroid_feat).unsqueeze(1)  # [B, 1, D]
+        V = self.value_proj(centroid_feat).unsqueeze(1)# [B, 1, D]
+
+        scores = torch.matmul(Q, K.transpose(-1, -2)) * self.scale # [B, 1, 1]
+        attn_weights = F.softmax(scores, dim=-1)
+        
+        attended_centroid = torch.matmul(attn_weights, V).squeeze(1) # [B, D]
+        
+        # Residual fusion with original flux features
+        return flux_feat + attended_centroid
+    
 class MultiBranchExoMiner(nn.Module):
     def __init__(self, scalar_dim, full_flux_len=200, transit_flux_len=50, full_centroid_len=50, transit_centroid_len=50):
         super().__init__()
@@ -129,16 +156,22 @@ class MultiBranchExoMiner(nn.Module):
         transit_flux_feat_dim = get_output_dim(self.transit_flux_branch, input_length=transit_flux_len)
         full_centroid_feat_dim = get_output_dim(self.full_centroid_branch, input_length=full_centroid_len)
         transit_centroid_feat_dim = get_output_dim(self.transit_centroid_branch, input_length=transit_centroid_len)
+        #Cross-modal attention modules for flux and centroid features(global and local streams)
+        self.global_attention = CrossModalAttentionFusion(flux_feat_dim)
+        self.local_attention = CrossModalAttentionFusion(transit_flux_feat_dim)
         
         scalar_out_dim = 128 
 
-        fusion_dim = (
-            flux_feat_dim + 
-            transit_flux_feat_dim + 
-            full_centroid_feat_dim + 
-            transit_centroid_feat_dim + 
-            scalar_out_dim
-        )
+        # fusion_dim = (
+        #     flux_feat_dim + 
+        #     transit_flux_feat_dim + 
+        #     full_centroid_feat_dim + 
+        #     transit_centroid_feat_dim + 
+        #     scalar_out_dim
+        # )
+        # Fusion dimension after attention combination:
+        # global_fused + local_fused + scalar_features
+        fusion_dim = flux_feat_dim + transit_flux_feat_dim + scalar_out_dim
 
         self.classifier = nn.Sequential(
             nn.Linear(fusion_dim, 1024),
@@ -177,13 +210,14 @@ class MultiBranchExoMiner(nn.Module):
         scalar_features = self.scalar_encoder(
             scalar_features
         )
+    # Apply Cross-Modal Attention (Flux queries Centroid)
+        fused_global = self.global_attention(full_flux_features, full_centroid_features)
+        fused_local = self.local_attention(transit_flux_features, transit_centroid_features)
 
         combined = torch.cat(
             [
-                full_flux_features,
-                transit_flux_features,
-                full_centroid_features,
-                transit_centroid_features,
+                fused_global,
+                fused_local,
                 scalar_features
             ],
             dim=1
